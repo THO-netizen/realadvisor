@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# RealAdvisor MVP file-based store (nahradit PostgreSQL)
+.data/

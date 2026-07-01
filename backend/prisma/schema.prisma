@@ -1,0 +1,309 @@
+// RealAdvisor — Prisma schema
+// PostgreSQL 16 + PostGIS (geospatial dotazy přes raw SQL)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// ENUMS
+// ---------------------------------------------------------------------------
+
+enum OwnershipType {
+  OV
+  DV
+  OTHER
+}
+
+enum PropertyType {
+  FLAT
+  HOUSE
+  LAND
+  COMMERCIAL
+}
+
+enum PropertyCondition {
+  NEW
+  GOOD
+  AVERAGE
+  BAD
+  RECONSTRUCTION
+}
+
+enum ConstructionType {
+  BRICK
+  PANEL
+  WOOD
+  OTHER
+}
+
+enum ParkingType {
+  NONE
+  STREET
+  GARAGE
+  UNDERGROUND
+}
+
+enum WatchlistStatus {
+  new
+  sent
+  interested
+  viewing
+  rejected
+  archived
+}
+
+// ---------------------------------------------------------------------------
+// USERS (poradci)
+// ---------------------------------------------------------------------------
+
+model User {
+  id             String   @id @default(uuid())
+  clerkId        String   @unique @map("clerk_id")
+  email          String   @unique
+  fullName       String?  @map("full_name")
+  role           String   @default("ADVISOR")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  clients        Client[]
+  notes          AdvisorNote[]
+  reports        ClientReport[]
+
+  @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// CLIENTS (klienti poradce)
+// ---------------------------------------------------------------------------
+
+model Client {
+  id             String   @id @default(uuid())
+  advisorId      String   @map("advisor_id")
+  advisor        User     @relation(fields: [advisorId], references: [id])
+  firstName      String   @map("first_name")
+  lastName       String   @map("last_name")
+  email          String?
+  phone          String?
+  preferencesJson Json?   @map("preferences_json")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  watchlists     Watchlist[]
+  reports        ClientReport[]
+
+  @@map("clients")
+}
+
+// ---------------------------------------------------------------------------
+// LISTINGS (normalizovaná data nemovitostí)
+// ---------------------------------------------------------------------------
+
+model Listing {
+  id                    String            @id @default(uuid())
+  duplicateGroupId      String?           @map("duplicate_group_id")
+
+  source                String            @db.VarChar(50)
+  sourceUrl             String            @map("source_url")
+  externalId            String?           @map("external_id") @db.VarChar(100)
+
+  title                 String            @db.VarChar(300)
+
+  // Ceny ukládáme v haléřích (BIGINT) — žádný float
+  price                 BigInt
+  currency              String            @default("CZK") @db.Char(3)
+  pricePerM2            Int?              @map("price_per_m2")
+
+  disposition           String?           @db.VarChar(20)
+  usableArea            Decimal?          @map("usable_area") @db.Decimal(8, 2)
+  landArea              Decimal?          @map("land_area") @db.Decimal(10, 2)
+
+  ownershipType         OwnershipType?    @map("ownership_type")
+  propertyType          PropertyType?     @map("property_type")
+  condition             PropertyCondition?
+  constructionType      ConstructionType? @map("construction_type")
+
+  floor                 Int?              @db.SmallInt
+  totalFloors           Int?              @map("total_floors") @db.SmallInt
+  elevator              Boolean?
+  balcony               Boolean?
+  terrace               Boolean?
+  cellar                Boolean?
+  parking               ParkingType?
+  garden                Boolean?
+  energyLabel           String?           @map("energy_label") @db.Char(1)
+  monthlyFees           Int?              @map("monthly_fees")
+
+  // Adresa a GPS
+  addressText           String?           @map("address_text")
+  gpsLat                Decimal?          @map("gps_lat") @db.Decimal(10, 7)
+  gpsLng                Decimal?          @map("gps_lng") @db.Decimal(10, 7)
+  // location_point GEOMETRY je přidán přes raw SQL migraci (PostGIS)
+
+  district              String?           @db.VarChar(100)
+  municipality          String?           @db.VarChar(100)
+  municipalityPart      String?           @map("municipality_part") @db.VarChar(100)
+  cadastralArea         String?           @map("cadastral_area") @db.VarChar(100)
+
+  // Časová razítka
+  firstSeenAt           DateTime          @map("first_seen_at")
+  lastSeenAt            DateTime          @map("last_seen_at")
+  lastPriceChangeAt     DateTime?         @map("last_price_change_at")
+  statusActive          Boolean           @default(true) @map("status_active")
+
+  // Krátký text (max 500 znaků) — NIKDY celý text ani fotky
+  rawShortText          String?           @map("raw_short_text")
+  extractedFeaturesJson Json?             @map("extracted_features_json")
+  confidenceScore       Decimal?          @map("confidence_score") @db.Decimal(3, 2)
+
+  createdAt             DateTime          @default(now()) @map("created_at")
+  updatedAt             DateTime          @updatedAt @map("updated_at")
+
+  scores                ListingScore[]
+  snapshots             ListingSnapshot[]
+  sources               ListingSource[]
+  watchlists            Watchlist[]
+  notes                 AdvisorNote[]
+
+  @@index([statusActive, firstSeenAt])
+  @@index([municipality, ownershipType])
+  @@map("listings")
+}
+
+// ---------------------------------------------------------------------------
+// LISTING_SOURCES (portál, URL, external_id)
+// ---------------------------------------------------------------------------
+
+model ListingSource {
+  id         String  @id @default(uuid())
+  listingId  String  @map("listing_id")
+  listing    Listing @relation(fields: [listingId], references: [id])
+  portal     String  @db.VarChar(50)
+  sourceUrl  String  @map("source_url")
+  externalId String? @map("external_id") @db.VarChar(100)
+  fetchedAt  DateTime @map("fetched_at")
+
+  @@map("listing_sources")
+}
+
+// ---------------------------------------------------------------------------
+// LISTING_SNAPSHOTS (historie cen a stavů)
+// ---------------------------------------------------------------------------
+
+model ListingSnapshot {
+  id          String   @id @default(uuid())
+  listingId   String   @map("listing_id")
+  listing     Listing  @relation(fields: [listingId], references: [id])
+  price       BigInt
+  statusActive Boolean @map("status_active")
+  snapshotAt  DateTime @map("snapshot_at")
+
+  @@index([listingId, snapshotAt])
+  @@map("listing_snapshots")
+}
+
+// ---------------------------------------------------------------------------
+// LISTING_SCORES (skóre a sub-skóre)
+// ---------------------------------------------------------------------------
+
+model ListingScore {
+  id                String   @id @default(uuid())
+  listingId         String   @unique @map("listing_id")
+  listing           Listing  @relation(fields: [listingId], references: [id])
+
+  totalScore        Int      @map("total_score") @db.SmallInt
+  priceScore        Int      @map("price_score") @db.SmallInt
+  locationScore     Int      @map("location_score") @db.SmallInt
+  mortgageScore     Int      @map("mortgage_score") @db.SmallInt
+  growthScore       Int      @map("growth_score") @db.SmallInt
+  liquidityScore    Int      @map("liquidity_score") @db.SmallInt
+
+  riskPenalty       Int      @map("risk_penalty") @db.SmallInt
+  riskFlags         Json     @map("risk_flags")
+
+  priceVsMedianPct  Decimal? @map("price_vs_median_pct") @db.Decimal(5, 2)
+  metroWalkMinutes  Int?     @map("metro_walk_minutes") @db.SmallInt
+  mhdWalkMinutes    Int?     @map("mhd_walk_minutes") @db.SmallInt
+
+  scoringVersion    String   @map("scoring_version") @db.VarChar(20)
+  calculatedAt      DateTime @map("calculated_at")
+
+  @@map("listing_scores")
+}
+
+// ---------------------------------------------------------------------------
+// WATCHLISTS (přiřazení inzerát → klient + pipeline stav)
+// ---------------------------------------------------------------------------
+
+model Watchlist {
+  id          String          @id @default(uuid())
+  listingId   String          @map("listing_id")
+  listing     Listing         @relation(fields: [listingId], references: [id])
+  clientId    String          @map("client_id")
+  client      Client          @relation(fields: [clientId], references: [id])
+  status      WatchlistStatus @default(new)
+  viewingDate DateTime?       @map("viewing_date")
+  addedAt     DateTime        @default(now()) @map("added_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+
+  @@unique([listingId, clientId])
+  @@map("watchlists")
+}
+
+// ---------------------------------------------------------------------------
+// ADVISOR_NOTES (interní poznámky poradce)
+// ---------------------------------------------------------------------------
+
+model AdvisorNote {
+  id        String   @id @default(uuid())
+  listingId String?  @map("listing_id")
+  listing   Listing? @relation(fields: [listingId], references: [id])
+  authorId  String   @map("author_id")
+  author    User     @relation(fields: [authorId], references: [id])
+  content   String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("advisor_notes")
+}
+
+// ---------------------------------------------------------------------------
+// CLIENT_REPORTS (vygenerované PDF reporty)
+// ---------------------------------------------------------------------------
+
+model ClientReport {
+  id          String   @id @default(uuid())
+  clientId    String   @map("client_id")
+  client      Client   @relation(fields: [clientId], references: [id])
+  advisorId   String   @map("advisor_id")
+  advisor     User     @relation(fields: [advisorId], references: [id])
+  title       String
+  storageUrl  String   @map("storage_url")
+  listingIds  Json     @map("listing_ids")
+  generatedAt DateTime @default(now()) @map("generated_at")
+
+  @@map("client_reports")
+}
+
+// ---------------------------------------------------------------------------
+// SOURCE_CONNECTORS (konfigurace konektorů — admin)
+// ---------------------------------------------------------------------------
+
+model SourceConnector {
+  id          String   @id @default(uuid())
+  name        String   @unique @db.VarChar(50)
+  feedUrl     String?  @map("feed_url")
+  isActive    Boolean  @default(false) @map("is_active")
+  rateLimitMs Int      @default(2000) @map("rate_limit_ms")
+  lastRunAt   DateTime? @map("last_run_at")
+  lastStatus  String?  @map("last_status") @db.VarChar(50)
+  cronExpr    String?  @map("cron_expr") @db.VarChar(50)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("source_connectors")
+}
