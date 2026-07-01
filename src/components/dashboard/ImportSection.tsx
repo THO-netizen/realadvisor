@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -38,6 +39,28 @@ function relativeDays(iso: string): string {
   return `před ${days} dny`;
 }
 
+function ScoreBadge({ score }: { score: number | null | undefined }) {
+  if (score === null || score === undefined)
+    return <span className="text-slate-600 text-xs">—</span>;
+  const color =
+    score >= 80
+      ? "text-emerald-400 border-emerald-800 bg-emerald-950"
+      : score >= 60
+      ? "text-green-400 border-green-800 bg-green-950"
+      : score >= 40
+      ? "text-yellow-400 border-yellow-800 bg-yellow-950"
+      : score >= 20
+      ? "text-orange-400 border-orange-800 bg-orange-950"
+      : "text-red-400 border-red-800 bg-red-950";
+  return (
+    <span
+      className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs font-bold border ${color}`}
+    >
+      {score}
+    </span>
+  );
+}
+
 export function ImportSection({ initialListings }: ImportSectionProps) {
   const router = useRouter();
   const [url, setUrl] = useState("");
@@ -71,7 +94,6 @@ export function ImportSection({ initialListings }: ImportSectionProps) {
       const newListing: StoredListing = data.listing;
       const warning: string | null = data.robotsWarning ?? null;
 
-      // Optimistická aktualizace — přidáme/nahradíme v lokálním stavu
       setListings((prev) => {
         const exists = prev.findIndex((l) => l.sourceUrl === newListing.sourceUrl);
         if (exists !== -1) {
@@ -83,16 +105,17 @@ export function ImportSection({ initialListings }: ImportSectionProps) {
       });
 
       const isNew = newListing.firstSeenAt === newListing.lastSeenAt;
-      const isPartial = (data.listing as { isPartial?: boolean })?.isPartial;
+      const isPartial = newListing.isPartial;
       setStatus("ok");
       setMessage(
         (isNew ? "Inzerát uložen." : "Inzerát aktualizován.") +
-        (isPartial ? " Metadata byla načtena z URL — cena a plocha nejsou dostupné, ověřte je v originálu." : "") +
-        (warning ? ` ⚠ ${warning}` : "")
+          (isPartial
+            ? " Metadata načtena z URL — cena a plocha nejsou dostupné, ověřte v originálu."
+            : "") +
+          (warning ? ` ⚠ ${warning}` : "")
       );
       setUrl("");
 
-      // Refresh Server Component pro aktualizaci StatCard počítadel
       startTransition(() => router.refresh());
     } catch {
       setStatus("error");
@@ -110,7 +133,6 @@ export function ImportSection({ initialListings }: ImportSectionProps) {
       </CardHeader>
 
       <CardContent className="space-y-4">
-        {/* Formulář */}
         <form onSubmit={handleImport} className="flex gap-2">
           <input
             type="url"
@@ -137,7 +159,6 @@ export function ImportSection({ initialListings }: ImportSectionProps) {
           </Button>
         </form>
 
-        {/* Stavová zpráva */}
         {status === "ok" && (
           <div className="flex items-center gap-2 text-sm text-emerald-400">
             <CheckCircle2 className="h-4 w-4 shrink-0" />
@@ -151,34 +172,20 @@ export function ImportSection({ initialListings }: ImportSectionProps) {
           </div>
         )}
 
-        {/* Tabulka importovaných inzerátů */}
         {listings.length > 0 && (
           <div className="rounded-lg border border-slate-800 overflow-hidden">
             <Table>
               <TableHeader>
                 <TableRow className="border-slate-800 hover:bg-transparent">
-                  <TableHead className="text-slate-500 text-xs font-medium h-8">
-                    Název
-                  </TableHead>
-                  <TableHead className="text-slate-500 text-xs font-medium h-8">
-                    Cena
-                  </TableHead>
-                  <TableHead className="text-slate-500 text-xs font-medium h-8">
-                    Kč/m²
-                  </TableHead>
-                  <TableHead className="text-slate-500 text-xs font-medium h-8">
-                    Disp.
-                  </TableHead>
-                  <TableHead className="text-slate-500 text-xs font-medium h-8">
-                    Plocha
-                  </TableHead>
-                  <TableHead className="text-slate-500 text-xs font-medium h-8">
-                    Lokalita
-                  </TableHead>
-                  <TableHead className="text-slate-500 text-xs font-medium h-8">
-                    Přidáno
-                  </TableHead>
-                  <TableHead className="text-slate-500 text-xs font-medium h-8 w-8" />
+                  <TableHead className="text-slate-500 text-xs font-medium h-8">Název</TableHead>
+                  <TableHead className="text-slate-500 text-xs font-medium h-8">Cena</TableHead>
+                  <TableHead className="text-slate-500 text-xs font-medium h-8">Kč/m²</TableHead>
+                  <TableHead className="text-slate-500 text-xs font-medium h-8">Disp.</TableHead>
+                  <TableHead className="text-slate-500 text-xs font-medium h-8">Plocha</TableHead>
+                  <TableHead className="text-slate-500 text-xs font-medium h-8">Lokalita</TableHead>
+                  <TableHead className="text-slate-500 text-xs font-medium h-8 text-center">Skóre</TableHead>
+                  <TableHead className="text-slate-500 text-xs font-medium h-8">Přidáno</TableHead>
+                  <TableHead className="text-slate-500 text-xs font-medium h-8 w-16" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -187,7 +194,7 @@ export function ImportSection({ initialListings }: ImportSectionProps) {
                     key={listing.id}
                     className="border-slate-800 hover:bg-slate-800/50 transition-colors"
                   >
-                    <TableCell className="text-sm text-white max-w-[220px]">
+                    <TableCell className="text-sm text-white max-w-[200px]">
                       <div className="flex items-center gap-2">
                         <Badge
                           variant="outline"
@@ -214,22 +221,34 @@ export function ImportSection({ initialListings }: ImportSectionProps) {
                     <TableCell className="text-sm text-slate-300 tabular-nums">
                       {listing.usableArea ? `${listing.usableArea} m²` : "—"}
                     </TableCell>
-                    <TableCell className="text-sm text-slate-400 max-w-[140px] truncate">
+                    <TableCell className="text-sm text-slate-400 max-w-[130px] truncate">
                       {listing.municipality ?? "—"}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <ScoreBadge score={listing.score?.total} />
                     </TableCell>
                     <TableCell className="text-xs text-slate-500 whitespace-nowrap">
                       {relativeDays(listing.firstSeenAt)}
                     </TableCell>
                     <TableCell>
-                      <a
-                        href={listing.sourceUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="p-1 text-slate-500 hover:text-white transition-colors flex items-center justify-center"
-                        title="Otevřít originál"
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                      </a>
+                      <div className="flex items-center gap-1">
+                        <Link
+                          href={`/listings/${listing.id}`}
+                          className="p-1 text-slate-500 hover:text-blue-400 transition-colors flex items-center justify-center"
+                          title="Detail inzerátu"
+                        >
+                          <span className="text-[10px] font-medium">detail</span>
+                        </Link>
+                        <a
+                          href={listing.sourceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-1 text-slate-500 hover:text-white transition-colors flex items-center justify-center"
+                          title="Otevřít originál"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </a>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

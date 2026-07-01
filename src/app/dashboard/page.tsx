@@ -5,6 +5,7 @@ import { PriceAlarms } from "@/components/dashboard/PriceAlarms";
 import { WatchlistSummary } from "@/components/dashboard/WatchlistSummary";
 import { QuickFilters } from "@/components/dashboard/QuickFilters";
 import { ImportSection } from "@/components/dashboard/ImportSection";
+import { ClientSearch } from "@/components/dashboard/ClientSearch";
 import { getDashboardStats } from "@/lib/dashboard-data";
 import { loadListings } from "@/lib/listings-store";
 
@@ -91,6 +92,9 @@ export default async function DashboardPage() {
 
       {/* Import inzerátů */}
       <ImportSection initialListings={listings} />
+
+      {/* Vyhledávání pro klienta */}
+      <ClientSearch />
 
       {/* Původní widgety (připraveny pro napojení na backend) */}
       <div className="grid grid-cols-3 gap-4">

@@ -15,6 +15,14 @@ export interface SrealityMetadata {
   municipality: string | null;
   addressText: string | null;
   sourceUrl: string;
+  // Rozšířená pole (z API, pokud jsou dostupná)
+  gpsLat?: number | null;
+  gpsLng?: number | null;
+  ownershipType?: "OV" | "DV" | "OTHER" | null;
+  condition?: "NEW" | "GOOD" | "AVERAGE" | "BAD" | "RECONSTRUCTION" | null;
+  energyLabel?: string | null;
+  floor?: number | null;
+  totalFloors?: number | null;
   /** true = metadata jsou pouze z URL slug, data je nutné ověřit */
   isPartial: boolean;
 }
@@ -156,10 +164,60 @@ async function tryApi(id: string): Promise<Partial<SrealityMetadata> | null> {
 
     if (!title && !price) return null;
 
-    return { title, price: price ?? 0, pricePerM2, usableArea, municipality };
+    // GPS
+    const gpsLat: number | null = d?.map?.lat ?? null;
+    const gpsLng: number | null = d?.map?.lon ?? null;
+
+    // Vlastnictví
+    let ownershipType: SrealityMetadata["ownershipType"] = null;
+    const ownershipRaw = extractItemString(d?.items, ["Vlastnictví"]);
+    if (ownershipRaw?.includes("osobní")) ownershipType = "OV";
+    else if (ownershipRaw?.includes("družstev")) ownershipType = "DV";
+    else if (ownershipRaw) ownershipType = "OTHER";
+
+    // Stav
+    let condition: SrealityMetadata["condition"] = null;
+    const condRaw = extractItemString(d?.items, ["Stav objektu", "Stav"]);
+    if (condRaw?.includes("novostavba")) condition = "NEW";
+    else if (condRaw?.includes("velmi dobrý")) condition = "GOOD";
+    else if (condRaw?.includes("dobrý")) condition = "GOOD";
+    else if (condRaw?.includes("průměrný")) condition = "AVERAGE";
+    else if (condRaw?.includes("rekonstrukce")) condition = "RECONSTRUCTION";
+    else if (condRaw?.includes("špatný")) condition = "BAD";
+
+    // Energetická třída
+    const energyLabel = extractItemString(d?.items, ["Energetická náročnost budovy"]);
+
+    // Podlaží
+    const floorRaw = extractItemString(d?.items, ["Podlaží"]);
+    let floor: number | null = null;
+    let totalFloors: number | null = null;
+    if (floorRaw) {
+      const m = floorRaw.match(/(\d+)\s*(?:z|\/)\s*(\d+)/);
+      if (m) { floor = parseInt(m[1], 10); totalFloors = parseInt(m[2], 10); }
+      else { const n = floorRaw.match(/(\d+)/); if (n) floor = parseInt(n[1], 10); }
+    }
+
+    return {
+      title, price: price ?? 0, pricePerM2, usableArea, municipality,
+      gpsLat, gpsLng, ownershipType, condition,
+      energyLabel: energyLabel?.trim().toUpperCase().slice(0, 1) ?? null,
+      floor, totalFloors,
+    };
   } catch {
     return null;
   }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractItemString(items: any, names: string[]): string | null {
+  if (!Array.isArray(items)) return null;
+  for (const item of items) {
+    if (names.some((n) => item?.name === n)) {
+      return String(item?.value ?? "");
+    }
+  }
+  return null;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
