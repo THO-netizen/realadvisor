@@ -4,6 +4,7 @@ import { getListingById } from "@/lib/listings-store";
 import { loadListings } from "@/lib/listings-store";
 import { calcLocalityStats } from "@/lib/stats";
 import { ArrowLeft, ExternalLink, MapPin, Train, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { PropertyMapCardWrapper } from "@/components/listings/PropertyMapCardWrapper";
 
 export const dynamic = "force-dynamic";
 
@@ -305,6 +306,35 @@ export default async function ListingDetailPage({ params }: Props) {
           )}
         </div>
       </div>
+
+      {/* Mapa nemovitosti — vizuálně oddělená sekce */}
+      {listing.gpsLat && listing.gpsLng ? (
+        <PropertyMapCardWrapper
+          listingId={listing.id}
+          lat={listing.gpsLat}
+          lng={listing.gpsLng}
+          title={listing.title}
+          addressText={listing.addressText}
+          municipality={listing.municipality}
+          metroWalkMinutes={listing.metroWalkMinutes}
+          mhdWalkMinutes={listing.mhdWalkMinutes}
+        />
+      ) : (
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 flex items-center gap-3 text-sm text-slate-500">
+          <MapPin className="h-4 w-4 shrink-0" />
+          Mapa není dostupná — inzerát neobsahuje GPS souřadnice.
+          {listing.addressText && (
+            <a
+              href={`https://mapy.cz/zakladni?q=${encodeURIComponent(listing.addressText)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 hover:text-blue-300 flex items-center gap-1"
+            >
+              Hledat na Mapy.cz <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
+        </div>
+      )}
 
       {/* Metadata */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
