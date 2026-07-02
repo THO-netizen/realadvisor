@@ -1,109 +1,146 @@
-// Unified import service — obálka nad source-specific fetchery
-// Přidává: blacklist check, robots.txt, rate limit, scoring, Golemio data
+// Unified scraping layer — detekce portálu + stažení metadat.
+// Bez persistence, bez scoringu, bez Golemio.
+// Compliance: robots.txt check (neblokující), rate limit (1 req/2s).
 
 import { validateSrealityUrl, fetchSrealityMetadata } from "./sreality";
+import { validateBezrealitkyUrl, fetchBezrealitkyMetadata } from "./bezrealitky";
+import { validateIdnesUrl, fetchIdnesMetadata } from "./idnes";
+import { validateBazosUrl, fetchBazosMetadata } from "./bazos";
 import { isAllowedByRobots } from "./robots-checker";
 import { enforceRateLimit } from "./rate-limiter";
 import { isBlacklisted } from "./source-blacklist";
-import { upsertListing, loadListings, type UpsertInput } from "./listings-store";
-import { calculateScore, scoringInputFromListing } from "./scoring";
-import { calcLocalityStats } from "./stats";
-import { getTransitData } from "./golemio";
+import type { PortalMetadata, PortalSource } from "./portal-types";
 
-export interface ImportResult {
-  listing: Awaited<ReturnType<typeof upsertListing>>;
+interface PortalConfig {
+  source: PortalSource;
+  domain: string;
+  validate: (url: string) => { valid: boolean; error?: string };
+  fetch: (url: string) => Promise<PortalMetadata>;
+  robotsWarning: string;
+}
+
+const PORTAL_CONFIGS: PortalConfig[] = [
+  {
+    source: "sreality",
+    domain: "sreality.cz",
+    validate: validateSrealityUrl,
+    fetch: async (url) => {
+      const m = await fetchSrealityMetadata(url);
+      return {
+        externalId: m.externalId,
+        title: m.title,
+        price: m.price,
+        pricePerM2: m.pricePerM2,
+        disposition: m.disposition,
+        usableArea: m.usableArea,
+        municipality: m.municipality,
+        addressText: m.addressText,
+        sourceUrl: m.sourceUrl,
+        gpsLat: m.gpsLat ?? null,
+        gpsLng: m.gpsLng ?? null,
+        ownershipType: m.ownershipType ?? null,
+        condition: m.condition ?? null,
+        energyLabel: m.energyLabel ?? null,
+        floor: m.floor ?? null,
+        totalFloors: m.totalFloors ?? null,
+        isPartial: m.isPartial,
+      } satisfies PortalMetadata;
+    },
+    robotsWarning:
+      "Sreality omezuje automatický přístup (robots.txt). Ruční import je povolen.",
+  },
+  {
+    source: "bezrealitky",
+    domain: "bezrealitky.cz",
+    validate: validateBezrealitkyUrl,
+    fetch: fetchBezrealitkyMetadata,
+    robotsWarning:
+      "Bezrealitky omezuje přístup. Ruční import jednotlivých inzerátů je v pořádku.",
+  },
+  {
+    source: "idnes",
+    domain: "reality.idnes.cz",
+    validate: validateIdnesUrl,
+    fetch: fetchIdnesMetadata,
+    robotsWarning:
+      "iDNES Reality omezuje přístup. Ruční import je povolen.",
+  },
+  {
+    source: "bazos",
+    domain: "reality.bazos.cz",
+    validate: validateBazosUrl,
+    fetch: fetchBazosMetadata,
+    robotsWarning:
+      "Bazoš omezuje automatický přístup. Ověřte podmínky portálu.",
+  },
+];
+
+export interface ScrapedListing {
+  metadata: PortalMetadata;
+  source: PortalSource;
   robotsWarning: string | null;
 }
 
-export async function importFromUrl(rawUrl: string): Promise<ImportResult> {
-  // 1. Blacklist check
+function detectPortal(url: string): PortalConfig | null {
+  try {
+    const { hostname } = new URL(url.trim());
+    return PORTAL_CONFIGS.find((c) => hostname.endsWith(c.domain)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function scrapeUrl(rawUrl: string): Promise<ScrapedListing> {
   if (isBlacklisted(rawUrl)) {
     throw new Error(
-      "Tento zdroj je na blacklistu. Portál explicitně zakázal automatizovaný přístup."
+      "Tento portál je na blacklistu — explicitně zakázal automatizovaný přístup."
     );
   }
 
-  // 2. Validace URL (Sreality — primární zdroj)
-  const validation = validateSrealityUrl(rawUrl);
+  const portal = detectPortal(rawUrl);
+  if (!portal) {
+    throw new Error(
+      "Nepodporovaný portál. Podporované zdroje: Sreality, Bezrealitky, iDNES Reality, Bazoš."
+    );
+  }
+
+  const validation = portal.validate(rawUrl);
   if (!validation.valid) {
     throw new Error(validation.error ?? "Neplatná URL.");
   }
 
-  // 3. Robots.txt check (neblokující pro ruční import)
   const robotsAllowed = await isAllowedByRobots(rawUrl);
+  await enforceRateLimit(portal.domain);
 
-  // 4. Rate limit
-  await enforceRateLimit("sreality.cz");
+  console.log(`[scraper] Krok A — ${portal.source}: ${rawUrl}`);
+  const metadata = await portal.fetch(rawUrl);
 
-  // 5. Stažení metadat
-  const metadata = await fetchSrealityMetadata(rawUrl);
-
-  // 6. Golemio MHD data (pokud máme GPS)
-  let metroWalkMinutes: number | null = null;
-  let mhdWalkMinutes: number | null = null;
-  if (metadata.gpsLat && metadata.gpsLng) {
-    try {
-      const transit = await getTransitData(metadata.gpsLat, metadata.gpsLng);
-      metroWalkMinutes = transit.nearestMetroMinutes;
-      mhdWalkMinutes = transit.nearestMhdMinutes;
-    } catch {
-      // Golemio je optional — neblokuje import
-    }
+  if (!metadata.price || metadata.price <= 0) {
+    throw new Error(
+      `Chyba: Inzerát neobsahuje cenu. ` +
+      `Zkontrolujte URL nebo zkuste inzerát znovu (možná je smazán).`
+    );
   }
 
-  // 7. Výpočet skóre
-  const allListings = loadListings();
-  const localityStats = metadata.municipality
-    ? calcLocalityStats(metadata.municipality, allListings)
-    : null;
-
-  const scoringInput = scoringInputFromListing(
-    {
-      ...metadata,
-      ownershipType: metadata.ownershipType ?? null,
-      condition: metadata.condition ?? null,
-      energyLabel: metadata.energyLabel ?? null,
-      floor: metadata.floor ?? null,
-      metroWalkMinutes,
-      mhdWalkMinutes,
-      rawShortTextLength: metadata.title?.length ?? 0,
-    },
-    localityStats?.medianPricePerM2 ?? null
+  console.log(
+    `[scraper] ✓ ${portal.source} OK — ` +
+    `${metadata.price.toLocaleString("cs-CZ")} Kč | ` +
+    `${metadata.usableArea ?? "?"} m² | ` +
+    `"${metadata.municipality ?? "?"}"`
   );
-  const score = calculateScore(scoringInput);
-
-  // 8. Uložení
-  const upsertData: UpsertInput = {
-    source: "sreality",
-    sourceUrl: metadata.sourceUrl,
-    externalId: metadata.externalId,
-    title: metadata.title,
-    price: metadata.price,
-    pricePerM2: metadata.pricePerM2,
-    disposition: metadata.disposition,
-    usableArea: metadata.usableArea,
-    municipality: metadata.municipality,
-    addressText: metadata.addressText,
-    gpsLat: metadata.gpsLat ?? null,
-    gpsLng: metadata.gpsLng ?? null,
-    ownershipType: metadata.ownershipType ?? null,
-    condition: metadata.condition ?? null,
-    energyLabel: metadata.energyLabel ?? null,
-    floor: metadata.floor ?? null,
-    totalFloors: metadata.totalFloors ?? null,
-    metroWalkMinutes,
-    mhdWalkMinutes,
-    poiCount500m: null,
-    score,
-    isPartial: metadata.isPartial,
-  };
-
-  const listing = upsertListing(upsertData);
 
   return {
-    listing,
-    robotsWarning: !robotsAllowed
-      ? "robots.txt portálu omezuje automatický přístup. Ruční import je povolen, ale pro pravidelné stahování dat kontaktujte Sreality pro partnerský feed."
-      : null,
+    metadata,
+    source: portal.source,
+    robotsWarning: !robotsAllowed ? portal.robotsWarning : null,
   };
+}
+
+export function getSupportedPortals(): Array<{ source: PortalSource; domain: string; label: string }> {
+  return [
+    { source: "sreality",    domain: "sreality.cz",       label: "Sreality" },
+    { source: "bezrealitky", domain: "bezrealitky.cz",    label: "Bezrealitky" },
+    { source: "idnes",       domain: "reality.idnes.cz",  label: "iDNES Reality" },
+    { source: "bazos",       domain: "reality.bazos.cz",  label: "Bazoš Reality" },
+  ];
 }

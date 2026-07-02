@@ -1,35 +1,37 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist_Mono } from "next/font/google";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const mono = Geist_Mono({
+  variable: "--font-mono",
   subsets: ["latin"],
 });
 
 export const metadata: Metadata = {
-  title: "RealAdvisor — Interní agregátor nemovitostí",
-  description:
-    "Interní pracovní plocha pro finanční poradce — vyhledávání, hodnocení a prezentace nemovitostí klientům.",
+  title: "AL's brainfarts — interní analyzátor",
+  description: "Analyzátor tržní ceny nemovitostí pro interní potřeby.",
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html
-      lang="cs"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
-      <body className="min-h-full flex flex-col bg-slate-950 text-slate-100">
-        {children}
+    <html lang="cs" className={`${mono.variable} h-full`}>
+      <body className="min-h-full flex flex-col bg-black text-white font-mono antialiased">
+        <header className="border-b border-[#39ff14]/20 px-6 py-3 flex items-center justify-between">
+          <span className="text-xs text-[#39ff14] tracking-widest uppercase font-bold">
+            AL&apos;s brainfarts
+          </span>
+          <span className="text-[10px] text-[#39ff14]/40">
+            RealAdvisor © internal use only
+          </span>
+        </header>
+
+        <main className="flex-1 flex flex-col">
+          {children}
+        </main>
+
+        <footer className="border-t border-[#39ff14]/15 px-6 py-2 text-[10px] text-[#39ff14]/35">
+          Data jsou orientační. Model P&nbsp;~&nbsp;N(E[P],&nbsp;Var(P)) využívá simulovaný rozptyl dle Reas.cz.
+        </footer>
       </body>
     </html>
   );

@@ -42,3 +42,7 @@ next-env.d.ts
 
 # RealAdvisor MVP file-based store (nahradit PostgreSQL)
 .data/
+
+# Backend build artifacts
+backend/node_modules/
+backend/dist/
